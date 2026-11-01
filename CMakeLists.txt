@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(VoxBotX VERSION 1.0.0)
+project(VoxBotX VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,16 +21,16 @@ juce_add_plugin(VoxBotX
     PLUGIN_MANUFACTURER_CODE    Tntk
     PLUGIN_CODE                 Vbxx
     PRODUCT_NAME                "VoxBot - X"
-    DESCRIPTION                 "Robot vocoder for vocals"
+    DESCRIPTION                 "Vocal manipulator and robot vocoder"
     FORMATS                     VST3 AU Standalone
     IS_SYNTH                    FALSE
-    NEEDS_MIDI_INPUT            FALSE
+    NEEDS_MIDI_INPUT            TRUE
     NEEDS_MIDI_OUTPUT           FALSE
     IS_MIDI_EFFECT              FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD     FALSE
-    VST3_CATEGORIES             Fx Modulation
-    AU_MAIN_TYPE                kAudioUnitType_Effect
+    VST3_CATEGORIES             Fx "Pitch Shift"
+    AU_MAIN_TYPE                kAudioUnitType_MusicEffect
 )
 
 target_sources(VoxBotX PRIVATE
@@ -38,6 +38,8 @@ target_sources(VoxBotX PRIVATE
     Source/PluginEditor.cpp
     Source/VoxBotLookAndFeel.cpp
     Source/RobotFaces.cpp
+    Source/Params.cpp
+    Source/Controls.cpp
 )
 
 target_compile_definitions(VoxBotX PUBLIC

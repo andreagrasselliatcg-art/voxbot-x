@@ -9,17 +9,10 @@
 //                                                     │
 //           voice high-pass (sibilance) ──────────────┴─► wet out
 
-#include <array>
-#include <cmath>
-#include <cstdint>
-#include <vector>
-#include <algorithm>
+#include "Dsp.h"
 
 namespace vbx
 {
-constexpr float kPi    = 3.14159265358979f;
-constexpr float kTwoPi = 6.28318530717959f;
-
 //==============================================================================
 struct Preset
 {
@@ -56,137 +49,6 @@ inline const std::array<Preset, kNumPresets>& presets()
     }};
     return p;
 }
-
-//==============================================================================
-// Topology-preserving-transform state variable filter (Cytomic / Simper).
-struct SVF
-{
-    float ic1 = 0, ic2 = 0, a1 = 0, a2 = 0, a3 = 0, k = 1;
-
-    void set (float fc, float q, float sr)
-    {
-        fc = std::clamp (fc, 20.0f, 0.45f * sr);
-        const float g = std::tan (kPi * fc / sr);
-        k  = 1.0f / q;
-        a1 = 1.0f / (1.0f + g * (g + k));
-        a2 = g * a1;
-        a3 = g * a2;
-    }
-
-    inline void tick (float v0, float& bp, float& lp)
-    {
-        const float v3 = v0 - ic2;
-        const float v1 = a1 * ic1 + a2 * v3;
-        const float v2 = ic2 + a2 * ic1 + a3 * v3;
-        ic1 = 2.0f * v1 - ic1;
-        ic2 = 2.0f * v2 - ic2;
-        bp = v1; lp = v2;
-    }
-
-    inline float bandpass (float v0) { float b, l; tick (v0, b, l); return k * b; } // unity peak
-    inline float lowpass  (float v0) { float b, l; tick (v0, b, l); return l; }
-    inline float highpass (float v0) { float b, l; tick (v0, b, l); return v0 - k * b - l; }
-
-    void reset() { ic1 = ic2 = 0; }
-};
-
-//==============================================================================
-// YIN pitch tracker running on a decimated copy of the voice.
-class PitchTracker
-{
-public:
-    void prepare (double sampleRate)
-    {
-        decim  = std::max (1, (int) std::lround (sampleRate / 11025.0));
-        dsr    = (float) sampleRate / (float) decim;
-        tauMin = std::max (2, (int) std::floor (dsr / 1100.0f));
-        tauMax = (int) std::ceil (dsr / 60.0f);
-        integ  = std::max (256, tauMax * 2);
-        winLen = integ + tauMax + 2;
-        hop    = std::max (32, (int) (dsr * 0.006f));
-
-        ring.assign ((size_t) winLen, 0.0f);
-        frame.assign ((size_t) winLen, 0.0f);
-        cmnd.assign ((size_t) tauMax + 2, 1.0f);
-        aa.set (2200.0f, 0.707f, (float) sampleRate);
-        aa2.set (2200.0f, 0.707f, (float) sampleRate);
-        aa.reset(); aa2.reset();
-        writePos = 0; decimCount = 0; hopCount = 0;
-        hz = 0; voiced = false;
-    }
-
-    inline void push (float x)
-    {
-        x = aa2.lowpass (aa.lowpass (x));
-        if (++decimCount < decim) return;
-        decimCount = 0;
-
-        ring[(size_t) writePos] = x;
-        writePos = (writePos + 1) % winLen;
-
-        if (++hopCount >= hop) { hopCount = 0; analyse(); }
-    }
-
-    float hz = 0.0f;
-    bool  voiced = false;
-
-private:
-    void analyse()
-    {
-        double energy = 0;
-        for (int i = 0; i < winLen; ++i)
-        {
-            const float s = ring[(size_t) ((writePos + i) % winLen)];
-            frame[(size_t) i] = s;
-            energy += (double) s * s;
-        }
-
-        const float rms = (float) std::sqrt (energy / winLen);
-        if (rms < 0.004f) { voiced = false; return; }
-
-        float running = 0.0f;
-        cmnd[0] = 1.0f;
-        for (int tau = 1; tau <= tauMax; ++tau)
-        {
-            float d = 0.0f;
-            const float* a = frame.data();
-            const float* b = frame.data() + tau;
-            for (int j = 0; j < integ; ++j) { const float df = a[j] - b[j]; d += df * df; }
-            running += d;
-            cmnd[(size_t) tau] = running > 0.0f ? d * (float) tau / running : 1.0f;
-        }
-
-        int best = -1;
-        for (int tau = tauMin; tau < tauMax; ++tau)
-        {
-            if (cmnd[(size_t) tau] < 0.18f)
-            {
-                while (tau + 1 < tauMax && cmnd[(size_t) tau + 1] < cmnd[(size_t) tau]) ++tau;
-                best = tau;
-                break;
-            }
-        }
-
-        if (best < 0) { voiced = false; return; }
-
-        float t = (float) best;
-        if (best > 1 && best < tauMax)
-        {
-            const float s0 = cmnd[(size_t) best - 1], s1 = cmnd[(size_t) best], s2 = cmnd[(size_t) best + 1];
-            const float den = s0 + s2 - 2.0f * s1;
-            if (std::abs (den) > 1e-9f) t += 0.5f * (s0 - s2) / den;
-        }
-
-        hz = dsr / t;
-        voiced = true;
-    }
-
-    SVF aa, aa2;
-    int decim = 4, tauMin = 10, tauMax = 184, integ = 368, winLen = 560, hop = 64;
-    float dsr = 11025.0f;
-    int writePos = 0, decimCount = 0, hopCount = 0;
-    std::vector<float> ring, frame, cmnd;
-};
 
 //==============================================================================
 class VocoderEngine
@@ -241,6 +103,9 @@ public:
 
     int getPreset() const { return presetIndex; }
 
+    /** When > 0 the carrier plays this frequency (e.g. a held MIDI note) instead of tracking the voice. */
+    void setExternalPitch (float hz) { externalHz = hz; }
+
     // Processes a block of mono voice into a mono wet (vocoded) signal.
     void process (const float* in, float* out, int n)
     {
@@ -252,13 +117,13 @@ public:
             tracker.push (x);
 
             // ---- carrier pitch -------------------------------------------------
-            float targetHz = p->pitchMode == 0 ? p->fixedHz : tracker.hz;
+            float targetHz = externalHz > 0.0f ? externalHz : (p->pitchMode == 0 ? p->fixedHz : tracker.hz);
             if (targetHz < 40.0f) targetHz = std::exp (logHz);  // hold last pitch
-            if (p->pitchMode == 2)
+            if (p->pitchMode == 2 && externalHz <= 0.0f)
                 targetHz = 440.0f * std::pow (2.0f, std::round (12.0f * std::log2 (targetHz / 440.0f)) / 12.0f);
 
             const float targetLog = std::log (targetHz);
-            if (p->pitchMode == 0 || tracker.voiced)
+            if (p->pitchMode == 0 || tracker.voiced || externalHz > 0.0f)
                 logHz += glideCoef * (targetLog - logHz);
 
             voicing += voicingCoef * ((tracker.voiced ? 1.0f : 0.0f) - voicing);
@@ -387,6 +252,7 @@ private:
     int crushCount = 0; float crushHold = 0;
     float dcBlock = 0, dcPrev = 0;
     uint32_t rng = 22222u;
+    float externalHz = 0.0f;
 };
 
 } // namespace vbx

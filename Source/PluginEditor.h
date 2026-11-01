@@ -1,33 +1,52 @@
 #pragma once
 
-#include "PluginProcessor.h"
-#include "VoxBotLookAndFeel.h"
+#include "Controls.h"
 
-/** Small triangular button used to step through presets. */
-class PresetArrow : public juce::Component
+//==============================================================================
+/** One modulation slot: source selector, source-specific controls, cross-mod. */
+class ModSlotPanel : public juce::Component
 {
 public:
-    explicit PresetArrow (bool pointsRight) : right (pointsRight)
-    {
-        setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    }
-
-    std::function<void()> onClick;
-    juce::Colour colour { 0xffd0d0d8 };
-
+    ModSlotPanel (UiShared&, int slot);
     void paint (juce::Graphics&) override;
-    void mouseEnter (const juce::MouseEvent&) override { hover = true;  repaint(); }
-    void mouseExit  (const juce::MouseEvent&) override { hover = false; repaint(); }
-    void mouseUp    (const juce::MouseEvent& e) override
-    {
-        if (onClick && getLocalBounds().contains (e.getPosition())) onClick();
-    }
+    void resized() override;
+    void refresh();                // called by the editor timer
+
+    std::function<void()> onAssign;
+    void setArmed (bool a) { assign.latched = a; assign.repaint(); }
 
 private:
-    bool right, hover = false;
+    UiShared& ui;
+    int slot;
+    juce::Colour col;
+    int shownType = -1;
+    bool shownSync = true;
+
+    ParamToggle on;
+    ParamCombo type;
+    ClickButton assign { "ASSIGN" };
+
+    // Meta
+    ParamKnob meta;
+    ParamSegment polarity;
+    ParamCombo steps;
+    // MIDI
+    ParamCombo midiSrc;
+    // Sequencer
+    StepEditor stepEditor;
+    ClickButton patPrev { "", -1 }, patNext { "", +1 };
+    ParamToggle sync, retrig;
+    ParamKnob rate, division, shape;
+    // Follower
+    ParamKnob folAtk, folRel;
+    // ADSR
+    ParamKnob adsrA, adsrD, adsrS, adsrR;
+    // Cross modulation
+    std::vector<std::unique_ptr<ParamKnob>> cross;
 };
 
-class VoxBotAudioProcessorEditor : public juce::AudioProcessorEditor
+//==============================================================================
+class VoxBotAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     explicit VoxBotAudioProcessorEditor (VoxBotAudioProcessor&);
@@ -37,17 +56,30 @@ public:
     void resized() override;
 
 private:
-    void stepPreset (int delta);
-    void updateAccent();
+    void timerCallback() override;
+    void armSlot (int slot);
+    ParamKnob& addKnob (const juce::String& id, const juce::String& label, int target, ParamKnob::Style style = ParamKnob::knob);
 
     VoxBotAudioProcessor& processorRef;
     VoxBotLookAndFeel lnf;
+    UiShared ui;
 
-    juce::Slider presetKnob, mixKnob, outputKnob;
-    PresetArrow prevButton { false }, nextButton { true };
+    FaceSelector face { ui };
+    ClickButton prevPreset { "", -1 }, nextPreset { "", +1 }, initButton { "INIT" };
+    ParamSegment detect;
+    ParamToggle snap;
 
-    using Attachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    std::unique_ptr<Attachment> presetAttachment, mixAttachment, outputAttachment;
+    std::vector<std::unique_ptr<ParamKnob>> knobs;
+    std::array<ParamKnob*, Params::kNumTargets> targetKnobs {};
+
+    ParamCombo robotType, midiMode;
+    ParamToggle midiGlide;
+    ParamKnob *glide = nullptr, *gateAtk = nullptr, *gateRel = nullptr, *output = nullptr;
+
+    std::vector<std::unique_ptr<ModSlotPanel>> slots;
+
+    int shownPreset = -1;
+    bool shownGated = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VoxBotAudioProcessorEditor)
 };
